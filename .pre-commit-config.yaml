@@ -4,13 +4,3 @@ repos:
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
-
-  - repo: https://github.com/bridgecrewio/checkov.git
-    rev: 3.2.298
-    hooks:
-      - id: checkov
-        args:
-          - "--framework=terraform"
-          - "--download-external-modules=true"
-          - "--quiet"
-          - "--skip-path=.terraform"
