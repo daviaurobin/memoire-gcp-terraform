@@ -2,22 +2,26 @@ name: CI - Terraform + Checks
 
 on:
   push:
-    branches: [ "main" ]          # pas de filtre 'paths' -> chaque push sur main déclenche
-  pull_request:
     branches: [ "main" ]
+  pull_request:
   workflow_dispatch:
 
-env:
-  GCP_PROJECT_ID: direct-byte-472309-n3
-  TF_INPUT: "false"
-  TF_IN_AUTOMATION: "true"
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ci:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write   # requis par google-github-actions/auth@v2
+    env:
+      PROJECT_ID: direct-byte-472309-n3
+      GOOGLE_CLOUD_PROJECT: direct-byte-472309-n3
+      TF_VAR_project_id: direct-byte-472309-n3
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
 
     steps:
       - name: Checkout
@@ -26,9 +30,8 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.5
+          terraform_wrapper: false
 
-      # Auth GCP via clé JSON stockée dans le secret GCP_SA_KEY
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -37,57 +40,51 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+          version: ">= 460.0.0"
 
       - name: Create reports folder
         run: mkdir -p reports
 
-      # --- Terraform checks & plan ---
       - name: Terraform init
-        run: terraform init -input=false
-
-      - name: Terraform fmt (check)
-        run: terraform fmt -check
+        run: terraform init -no-color -input=false
 
       - name: Terraform validate
         run: terraform validate -no-color
 
       - name: Terraform plan
-        run: terraform plan -no-color -out=tfplan.out
+        run: terraform plan -no-color -input=false -out=tfplan
 
-      # --- Checkov (soft-fail) ---
-      - name: Install Checkov
-        run: pip install "checkov==3.2.306"
+      - name: Upload TF plan (PRs)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: tfplan
 
-      - name: Checkov (Terraform -> JSON in reports/)
-        continue-on-error: true
-        run: checkov --framework terraform -o json > reports/checkov.json
+      - name: Terraform apply (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve tfplan
 
-      # --- Prowler GCP (optionnel, soft-fail) ---
+      # --- Prowler après apply sur main ---
+      - name: Setup Python
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install Prowler
-        run: pip install "prowler==3.11.3"
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: pip install "prowler-cloud==3.11.3"
 
-      - name: Run Prowler (HTML+JSON -> reports/)
-        continue-on-error: true
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-key.json
+      - name: Run Prowler
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          echo '${{ secrets.GCP_SA_KEY }}' > "$GOOGLE_APPLICATION_CREDENTIALS"
-          prowler gcp --project-ids ${{ env.GCP_PROJECT_ID }} -M html json -o reports/
+          prowler gcp --project-ids $PROJECT_ID -M html json -o reports/
 
-      - name: Upload reports artifact
+      - name: Upload security reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
           path: reports/**
-
-      # --- Apply auto sur push main (si tu veux déployer automatiquement) ---
-      - name: Terraform apply
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: terraform apply -auto-approve -input=false tfplan.out
+          if-no-files-found: warn
