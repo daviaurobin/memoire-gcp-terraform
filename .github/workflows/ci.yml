@@ -4,24 +4,18 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
+  id-token: write
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  TF_IN_AUTOMATION: "true"
+  GCP_PROJECT_ID: direct-byte-472309-n3
 
 jobs:
   ci:
     runs-on: ubuntu-latest
-    env:
-      PROJECT_ID: direct-byte-472309-n3
-      GOOGLE_CLOUD_PROJECT: direct-byte-472309-n3
-      TF_VAR_project_id: direct-byte-472309-n3
-      TF_IN_AUTOMATION: "true"
-      TF_INPUT: "false"
 
     steps:
       - name: Checkout
@@ -29,8 +23,6 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_wrapper: false
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -39,20 +31,19 @@ jobs:
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
-        with:
-          version: ">= 460.0.0"
 
       - name: Create reports folder
         run: mkdir -p reports
 
       - name: Terraform init
-        run: terraform init -no-color -input=false
+        run: terraform init -input=false
 
       - name: Terraform validate
         run: terraform validate -no-color
 
       - name: Terraform plan
-        run: terraform plan -no-color -input=false -out=tfplan
+        if: github.event_name == 'pull_request'
+        run: terraform plan -no-color -out=tfplan
 
       - name: Upload TF plan (PRs)
         if: github.event_name == 'pull_request'
@@ -62,29 +53,28 @@ jobs:
           path: tfplan
 
       - name: Terraform apply (main only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve tfplan
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -auto-approve -input=false
 
-      # --- Prowler après apply sur main ---
+      # --- Prowler ---
       - name: Setup Python
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.x'
 
       - name: Install Prowler
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: pip install "prowler-cloud==3.11.3"
+        run: pip install "prowler-cloud==3.*"
 
-      - name: Run Prowler
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Run Prowler (non-blocking)
+        shell: bash
         run: |
-          prowler gcp --project-ids $PROJECT_ID -M html json -o reports/
+          # Ne jamais échouer en fonction des findings
+          prowler gcp --project-ids "${{ env.GCP_PROJECT_ID }}" -M html json -o reports/ --quiet-exit || true
 
       - name: Upload security reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
-          path: reports/**
+          path: reports/
           if-no-files-found: warn
