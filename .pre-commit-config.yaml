@@ -1,3 +1,12 @@
+# =============================================================================
+# .pre-commit-config.yaml — Hooks qualité (fmt, validate, dossier reports)
+# Repository: memoire-gcp-terraform
+# Purpose   : Normaliser le style, éviter l’oubli du dossier reports/,
+#             lancer un premier niveau de contrôle IaC localement.
+# Author    : RD
+# Date      : 2025-10-01
+# =============================================================================
+
 repos:
   # Terraform fmt + validate
   - repo: https://github.com/antonbabenko/pre-commit-terraform
@@ -6,7 +15,7 @@ repos:
       - id: terraform_fmt
       - id: terraform_validate
 
-  # S'assurer que reports/ existe
+  # S'assurer que le dossier ./reports existe
   - repo: local
     hooks:
       - id: ensure-reports-dir
