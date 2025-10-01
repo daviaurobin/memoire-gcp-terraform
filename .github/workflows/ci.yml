@@ -16,14 +16,16 @@ name: CI - Terraform + Checks
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   pull_request:
-    branches: [ "main" ]
 
 permissions:
   contents: read
+  id-token: write
 
 env:
+  GCP_PROJECT_ID: direct-byte-472309-n3
   TF_IN_AUTOMATION: "true"
 
 jobs:
@@ -38,9 +40,12 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Authenticate to Google Cloud
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          export_default_credentials: true
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
@@ -52,48 +57,55 @@ jobs:
         run: terraform init -input=false
 
       - name: Terraform validate
-        run: terraform validate
+        run: terraform validate -no-color
 
       - name: Terraform plan
         id: plan
-        run: |
-          set -e
-          terraform plan -out=tfplan.bin
-          terraform show -json tfplan.bin > reports/plan.json
-          terraform show tfplan.bin > reports/plan.txt
+        run: terraform plan -no-color -out=tfplan
 
-      # Upload du plan sur PR uniquement (pour revue)
       - name: Upload TF plan (PRs)
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ github.event_name == 'pull_request' && steps.plan.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
-          name: tf-plan
-          path: reports/plan.*
+          name: tfplan
+          path: tfplan
 
-      # Apply auto uniquement sur main (démo)
       - name: Terraform apply (main only)
         if: ${{ github.ref == 'refs/heads/main' }}
-        run: terraform apply -auto-approve tfplan.bin
+        run: terraform apply -auto-approve -input=false
 
-      # Python (pour Prowler installé via pip)
+      # --- Prowler ------------------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
       - name: Install Prowler
-        run: pip install prowler
-
-      # Prowler seulement s’il y a des changements Terraform
-      - name: Run Prowler
-        if: ${{ steps.plan.outcome == 'success' && always() && contains((toJson(steps.plan.outputs) || ''), '') }}
         run: |
-          prowler gcp --project-ids ${{ env.GCLOUD_PROJECT }} -M html json -o reports/ || true
+          python -m pip install --upgrade pip
+          pip install prowler==3.11.3
+
+      # Aide au diagnostic : on vérifie le compte et le projet actifs
+      - name: Who am I? (GCloud)
+        run: |
+          echo "=== gcloud auth list ==="
+          gcloud auth list
+          echo "=== gcloud project ==="
+          gcloud config get-value core/project
+          echo "=== sample inventory ==="
+          gcloud compute networks list --project "${{ env.GCP_PROJECT_ID }}" || true
+
+      # Patch clé : on force Prowler à utiliser le même SA via l’ADC
+      - name: Run Prowler
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+        run: |
+          prowler gcp --project-ids "${{ env.GCP_PROJECT_ID }}" -M html json -o reports/
+          ls -la reports
 
       - name: Upload security reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
-          path: reports/
-          if-no-files-found: warn   # Affiche un warning si aucun rapport (comportement attendu si pas de changements)
+          path: reports/*
