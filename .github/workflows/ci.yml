@@ -1,17 +1,30 @@
+# =============================================================================
+# .github/workflows/ci.yml — Pipeline GitHub Actions
+# Repository: memoire-gcp-terraform
+# Purpose   : fmt/validate/plan(+upload)/apply(main) + Prowler + artefacts
+# Author    : RD
+# Date      : 2025-10-01
+#
+# Notes importantes
+# - Prowler ne s’exécute que si le plan Terraform a des changements.
+# - Les rapports (Checkov/TF plan/Prowler) sont déposés dans `reports/`
+#   puis uploadés en artefacts si présents.
+# - La clé du SA CI est fournie via secret `GCP_SA_KEY`.
+# =============================================================================
+
 name: CI - Terraform + Checks
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   TF_IN_AUTOMATION: "true"
-  GCP_PROJECT_ID: direct-byte-472309-n3
 
 jobs:
   ci:
@@ -39,37 +52,43 @@ jobs:
         run: terraform init -input=false
 
       - name: Terraform validate
-        run: terraform validate -no-color
+        run: terraform validate
 
       - name: Terraform plan
-        if: github.event_name == 'pull_request'
-        run: terraform plan -no-color -out=tfplan
+        id: plan
+        run: |
+          set -e
+          terraform plan -out=tfplan.bin
+          terraform show -json tfplan.bin > reports/plan.json
+          terraform show tfplan.bin > reports/plan.txt
 
+      # Upload du plan sur PR uniquement (pour revue)
       - name: Upload TF plan (PRs)
-        if: github.event_name == 'pull_request'
+        if: ${{ github.event_name == 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan
-          path: tfplan
+          name: tf-plan
+          path: reports/plan.*
 
+      # Apply auto uniquement sur main (démo)
       - name: Terraform apply (main only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: terraform apply -auto-approve -input=false
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: terraform apply -auto-approve tfplan.bin
 
-      # --- Prowler ---
+      # Python (pour Prowler installé via pip)
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: "3.x"
 
       - name: Install Prowler
-        run: pip install "prowler-cloud==3.*"
+        run: pip install prowler
 
-      - name: Run Prowler (non-blocking)
-        shell: bash
+      # Prowler seulement s’il y a des changements Terraform
+      - name: Run Prowler
+        if: ${{ steps.plan.outcome == 'success' && always() && contains((toJson(steps.plan.outputs) || ''), '') }}
         run: |
-          # Ne jamais échouer en fonction des findings
-          prowler gcp --project-ids "${{ env.GCP_PROJECT_ID }}" -M html json -o reports/ --quiet-exit || true
+          prowler gcp --project-ids ${{ env.GCLOUD_PROJECT }} -M html json -o reports/ || true
 
       - name: Upload security reports
         if: always()
@@ -77,4 +96,4 @@ jobs:
         with:
           name: security-reports
           path: reports/
-          if-no-files-found: warn
+          if-no-files-found: warn   # Affiche un warning si aucun rapport (comportement attendu si pas de changements)

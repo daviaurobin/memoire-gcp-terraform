@@ -1,3 +1,15 @@
+# =============================================================================
+# variables.tf — Variables d'entrée du module racine
+# Repository: memoire-gcp-terraform
+# Purpose   : Centraliser les paramètres (projet, régions, noms).
+# Author    : RD
+# Date      : 2025-10-01
+#
+# Notes
+# - Variables: lisibilité + réutilisation + sécurité.
+# - Checkov: favorise la factorisation et les valeurs explicites.
+# =============================================================================
+
 variable "project_id" {
   description = "ID du projet GCP"
   type        = string
@@ -27,3 +39,4 @@ variable "name_prefix" {
   type        = string
   default     = "memoire"
 }
+

@@ -1,3 +1,20 @@
+# =============================================================================
+# main.tf — Définition des ressources GCP (réseau, VM, buckets, IAM, logs)
+# Repository: memoire-gcp-terraform
+# Purpose   : Provisionner l’environnement
+# Author    : RD
+# Date      : 2025-10-01
+#
+# Conformité / sécurité :
+# - SSH via IAP uniquement (pare-feu restreint) pas d’IP publique ouverte.
+# - Clés SSH projet désactivées + OS Login activé pour une traçabilité IAM.
+# - Buckets: accès public interdit (PAP enforced), UBLA, logs d’accès.
+# - Audit logs exportés dans un bucket dédié (séparation des journaux).
+# - Rôles IAM en lecture pour l’utilisateur humain, CI via un SA dédié.
+# - Métriques/Alertes: création de métriques de log + policies de Monitoring
+#   pour détecter les changements sensibles (VPC, IAM, SQL, etc.).
+# =============================================================================
+
 ########################################
 # Provider + Locals
 ########################################
@@ -52,7 +69,7 @@ resource "google_compute_subnetwork" "subnet" {
   network                  = google_compute_network.vpc.id
   private_ip_google_access = true
 
-  # ✅ VPC Flow Logs
+  # VPC Flow Logs
   log_config {
     aggregation_interval = "INTERVAL_5_SEC"
     flow_sampling        = 0.5
@@ -219,7 +236,7 @@ resource "google_compute_instance" "vm" {
 }
 
 ########################################
-# IAM lecture granulaire (utilisateur humain)
+# IAM lecture (utilisateur humain)
 ########################################
 resource "google_project_iam_member" "compute_viewer" {
   project = local.project_id
@@ -264,7 +281,7 @@ resource "google_project_iam_member" "iap_tunnel_accessor" {
 }
 
 ########################################
-# 🔶 Prowler quick wins: Audit logs, Sink, Metrics & Alertes
+# Prowler: Audit logs, Sink, Metrics & Alertes
 ########################################
 
 # (1) Activer les Audit Logs (ADMIN/DATA READ/WRITE) sur tous les services
