@@ -1,6 +1,32 @@
 repos:
+  # Terraform fmt + validate
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.91.0
+    rev: v1.99.4
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
+
+  # S'assurer que reports/ existe
+  - repo: local
+    hooks:
+      - id: ensure-reports-dir
+        name: Ensure reports/ exists
+        entry: bash -lc 'mkdir -p reports'
+        language: system
+        pass_filenames: false
+
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: 3.2.306
+    hooks:
+      - id: checkov
+        name: Checkov (Terraform, JSON to reports/, soft-fail)
+        language_version: python3.11
+        args:
+          - --framework
+          - terraform
+          - -o
+          - json
+          - --output-file-path
+          - ./reports/results_json.json
+          - --soft-fail
+        pass_filenames: false

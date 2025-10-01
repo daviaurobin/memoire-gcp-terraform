@@ -5,3 +5,13 @@ crash.log
 *.tfvars
 *.tfvars.json
 # keep lock file
+
+# --- local / secrets / build ---
+sa.json
+reports/
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+terraform.tfvars
+*.tfvars

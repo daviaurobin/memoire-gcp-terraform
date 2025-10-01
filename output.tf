@@ -10,10 +10,10 @@ output "vm_name" {
   value = google_compute_instance.vm.name
 }
 
-output "vpc_name" {
-  value = google_compute_network.vpc.name
-}
-
 output "vm_service_account_email" {
   value = google_service_account.vm_sa.email
+}
+
+output "vpc_name" {
+  value = google_compute_network.vpc.name
 }

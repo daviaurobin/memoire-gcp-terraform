@@ -1,6 +1,7 @@
 variable "project_id" {
   description = "ID du projet GCP"
   type        = string
+  default     = "direct-byte-472309-n3"
 }
 
 variable "region" {
@@ -15,15 +16,14 @@ variable "zone" {
   default     = "europe-west1-b"
 }
 
-# Utilisateur autorisé pour OS Login / IAP (et sudo si admin)
 variable "oslogin_user_email" {
-  description = "Email du compte utilisateur autorisé pour OS Login + IAP (+ sudo si osAdminLogin)"
+  description = "Email de l'utilisateur humain (lecture + IAP)"
   type        = string
+  default     = "daviau.robin@gmail.com"
 }
 
-# Préfixe de nommage des ressources
 variable "name_prefix" {
-  description = "Préfixe de nommage des ressources"
+  description = "Préfixe des ressources"
   type        = string
   default     = "memoire"
 }
