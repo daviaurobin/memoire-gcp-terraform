@@ -18,14 +18,7 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-  # Run depuis Github actions (forcer Prowler si besoin)
   workflow_dispatch:
-    inputs:
-      run_prowler:
-        description: "Prowler: auto (si changements TF), always, ou never"
-        type: choice
-        options: [auto, always, never]
-        default: auto
 
 permissions:
   contents: read
@@ -35,17 +28,21 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     env:
+      # ID du projet GCP à scanner et déployer
       GOOGLE_CLOUD_PROJECT: direct-byte-472309-n3
 
     steps:
+      # --- Checkout du code
       - name: Checkout
         uses: actions/checkout@v4
 
+      # --- Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.5
 
+      # --- Authentification GCP via la clé JSON (ADC exportée)
       - name: Authenticate to Google Cloud (ADC)
         id: auth
         uses: google-github-actions/auth@v2
@@ -56,29 +53,22 @@ jobs:
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      # --- Dossier des rapports (Prowler)
       - name: Create reports folder
         run: mkdir -p reports
 
+      # --- Pipeline Terraform standard
       - name: Terraform init
         run: terraform init -input=false
 
       - name: Terraform validate
         run: terraform validate
 
-      - name: Terraform plan (detect changes)
+      - name: Terraform plan
         id: plan
         run: |
           set -o pipefail
-          terraform plan -detailed-exitcode -out=tfplan | tee plan.txt || rc=$?
-          if [ "${rc:=0}" -eq 1 ]; then
-            echo "Terraform plan failed"; exit 1
-          fi
-          if [ "${rc}" -eq 2 ]; then
-            echo "changes=true" >> $GITHUB_OUTPUT
-          else
-            echo "changes=false" >> $GITHUB_OUTPUT
-          fi
-          echo "exitcode=${rc:-0}" >> $GITHUB_OUTPUT
+          terraform plan -out=tfplan | tee plan.txt
 
       - name: Upload TF plan (PRs only)
         if: github.event_name == 'pull_request'
@@ -91,35 +81,26 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: terraform apply -auto-approve tfplan
 
-      # Décision: run Prowler
-      - name: Decide if we run Prowler
-        id: gate
-        run: |
-          mode="${{ github.event.inputs.run_prowler || 'auto' }}"
-          changes="${{ steps.plan.outputs.changes || 'false' }}"
-          if [ "$mode" = "always" ]; then run=true
-          elif [ "$mode" = "never" ]; then run=false
-          else run="$changes"; fi
-          echo "run=$run" >> $GITHUB_OUTPUT
-          echo "Prowler mode=$mode, changes=$changes, run=$run"
-
+      # --- Prowler : toujours exécuté
       - name: Setup Python
-        if: steps.gate.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - name: Install Prowler
-        if: steps.gate.outputs.run == 'true'
         run: pip install 'prowler~=3.11'
 
-      - name: Run Prowler
-        if: steps.gate.outputs.run == 'true'
+      - name: Run Prowler (always)
+        # Le job n'échoue pas si Prowler trouve des findings
+        continue-on-error: true
+        env:
+          # Prowler lit les ADC via GOOGLE_APPLICATION_CREDENTIALS exporté par l'étape "auth"
+          GOOGLE_CLOUD_PROJECT: ${{ env.GOOGLE_CLOUD_PROJECT }}
         run: |
-          prowler gcp --project-ids "$GOOGLE_CLOUD_PROJECT" -M html json -o reports/
+          echo "Scanning project: ${GOOGLE_CLOUD_PROJECT}"
+          prowler gcp --project-ids "${GOOGLE_CLOUD_PROJECT}" -M html json -o reports/
 
       - name: Upload security reports
-        if: steps.gate.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
