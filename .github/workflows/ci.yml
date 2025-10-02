@@ -22,50 +22,67 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   ci:
     runs-on: ubuntu-latest
     env:
-      # ID du projet GCP à scanner et déployer
+      # Projet GCP à déployer / scanner
       GOOGLE_CLOUD_PROJECT: direct-byte-472309-n3
 
     steps:
-      # --- Checkout du code
+      # 1) Code
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- Terraform
+      # 2) Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.5
 
-      # --- Authentification GCP via la clé JSON (ADC exportée)
-      - name: Authenticate to Google Cloud (ADC)
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-          export_environment_variables: true
-
+      # 3) gcloud CLI
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      # --- Dossier des rapports (Prowler)
+      # 4) Écrit la clé SA dans un fichier
+      - name: Write SA key to file
+        id: write_key
+        shell: bash
+        run: |
+          KEY="$RUNNER_TEMP/sa.json"
+          # important: pas d'échappement -> on écrit la clé telle quelle
+          printf '%s' '${{ secrets.GCP_SA_KEY }}' > "${KEY}"
+          echo "key=${KEY}" >> "$GITHUB_OUTPUT"
+
+      # 5) Active le service account
+      - name: Activate service account & set project
+        shell: bash
+        run: |
+          gcloud auth activate-service-account --key-file='${{ steps.write_key.outputs.key }}'
+          gcloud config set project '${{ env.GOOGLE_CLOUD_PROJECT }}'
+          gcloud auth list
+          gcloud config get-value project
+
+      # 6) Dossier de rapports
       - name: Create reports folder
         run: mkdir -p reports
 
-      # --- Pipeline Terraform standard
+      # 7) Terraform pipeline
       - name: Terraform init
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.write_key.outputs.key }}
         run: terraform init -input=false
 
       - name: Terraform validate
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.write_key.outputs.key }}
         run: terraform validate
 
       - name: Terraform plan
         id: plan
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.write_key.outputs.key }}
         run: |
           set -o pipefail
           terraform plan -out=tfplan | tee plan.txt
@@ -79,9 +96,11 @@ jobs:
 
       - name: Terraform apply (main only)
         if: github.ref == 'refs/heads/main'
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.write_key.outputs.key }}
         run: terraform apply -auto-approve tfplan
 
-      # --- Prowler : toujours exécuté
+      # 8) Prowler — toujours exécuté
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -90,15 +109,17 @@ jobs:
       - name: Install Prowler
         run: pip install 'prowler~=3.11'
 
-      - name: Run Prowler (always)
-        # Le job n'échoue pas si Prowler trouve des findings
+      - name: Run Prowler (always, same auth as local)
         continue-on-error: true
         env:
-          # Prowler lit les ADC via GOOGLE_APPLICATION_CREDENTIALS exporté par l'étape "auth"
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.write_key.outputs.key }}
           GOOGLE_CLOUD_PROJECT: ${{ env.GOOGLE_CLOUD_PROJECT }}
+          CLOUDSDK_CORE_PROJECT: ${{ env.GOOGLE_CLOUD_PROJECT }}
         run: |
-          echo "Scanning project: ${GOOGLE_CLOUD_PROJECT}"
-          prowler gcp --project-ids "${GOOGLE_CLOUD_PROJECT}" -M html json -o reports/
+          echo "ADC file: $GOOGLE_APPLICATION_CREDENTIALS"
+          echo "Project:  $GOOGLE_CLOUD_PROJECT"
+          # même commande que sur ta machine
+          prowler gcp --project-ids "$GOOGLE_CLOUD_PROJECT" -M html json -o reports/
 
       - name: Upload security reports
         uses: actions/upload-artifact@v4
