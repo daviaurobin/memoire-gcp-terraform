@@ -16,98 +16,111 @@ name: CI - Terraform + Checks
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
+  # Run depuis Github actions (forcer Prowler si besoin)
+  workflow_dispatch:
+    inputs:
+      run_prowler:
+        description: "Prowler: auto (si changements TF), always, ou never"
+        type: choice
+        options: [auto, always, never]
+        default: auto
 
 permissions:
   contents: read
   id-token: write
 
-env:
-  TF_IN_AUTOMATION: "true"
-  GCP_PROJECT_ID: direct-byte-472309-n3
-
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      GOOGLE_CLOUD_PROJECT: direct-byte-472309-n3
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---- Terraform toolchain ----
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.7.5
+          terraform_version: 1.9.5
 
-      # ---- Auth GCP (SA JSON depuis le secret) ----
-      - name: Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud (ADC)
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
-          # crée un fichier ADC et exporte GOOGLE_APPLICATION_CREDENTIALS
-          create_credentials_file: true
+          export_environment_variables: true
 
       - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v1
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
+        uses: google-github-actions/setup-gcloud@v2
 
-      # whoami (pour debug)
-      - name: Whoami (debug)
-        run: |
-          gcloud --version
-          gcloud config list
-          echo "ADC file: $GOOGLE_APPLICATION_CREDENTIALS"
-          gcloud auth list
-
-      # ---- Dossier des rapports ----
       - name: Create reports folder
         run: mkdir -p reports
 
-      # ---- Terraform ----
       - name: Terraform init
         run: terraform init -input=false
 
       - name: Terraform validate
         run: terraform validate
 
-      - name: Terraform plan
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
-        run: terraform plan -input=false -out=tfplan
+      - name: Terraform plan (detect changes)
+        id: plan
+        run: |
+          set -o pipefail
+          terraform plan -detailed-exitcode -out=tfplan | tee plan.txt || rc=$?
+          if [ "${rc:=0}" -eq 1 ]; then
+            echo "Terraform plan failed"; exit 1
+          fi
+          if [ "${rc}" -eq 2 ]; then
+            echo "changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "changes=false" >> $GITHUB_OUTPUT
+          fi
+          echo "exitcode=${rc:-0}" >> $GITHUB_OUTPUT
 
-      - name: Upload TF plan (PRs)
+      - name: Upload TF plan (PRs only)
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan
-          path: tfplan
+          name: tf-plan
+          path: plan.txt
 
       - name: Terraform apply (main only)
         if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve -input=false
+        run: terraform apply -auto-approve tfplan
 
-      # ---- Prowler (non-bloquant) ----
+      # Décision: run Prowler
+      - name: Decide if we run Prowler
+        id: gate
+        run: |
+          mode="${{ github.event.inputs.run_prowler || 'auto' }}"
+          changes="${{ steps.plan.outputs.changes || 'false' }}"
+          if [ "$mode" = "always" ]; then run=true
+          elif [ "$mode" = "never" ]; then run=false
+          else run="$changes"; fi
+          echo "run=$run" >> $GITHUB_OUTPUT
+          echo "Prowler mode=$mode, changes=$changes, run=$run"
+
       - name: Setup Python
+        if: steps.gate.outputs.run == 'true'
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: '3.x'
 
       - name: Install Prowler
-        run: pip install "prowler==3.*"
+        if: steps.gate.outputs.run == 'true'
+        run: pip install 'prowler~=3.11'
 
-      - name: Run Prowler (non-blocking)
-        shell: bash
+      - name: Run Prowler
+        if: steps.gate.outputs.run == 'true'
         run: |
-          # Ne jamais échouer en fonction des findings
-          prowler gcp --project-ids "${{ env.GCP_PROJECT_ID }}" -M html json -o reports/ --quiet-exit || true
+          prowler gcp --project-ids "$GOOGLE_CLOUD_PROJECT" -M html json -o reports/
 
       - name: Upload security reports
-        if: always()
+        if: steps.gate.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
-          path: reports/
-          if-no-files-found: warn
+          path: reports/*
