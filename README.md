@@ -54,6 +54,18 @@ L’authentification au projet GCP est réalisée via un **Service Account (`ci-
 
 ---
 
+## 🚨 Gestion des alertes de sécurité
+
+Lorsqu’une non-conformité est détectée par Checkov ou Prowler dans la pipeline :
+
+1. **Analyser le rapport** dans les logs GitHub Actions ou dans `/reports/`.
+2. **Appliquer la correction** recommandée (ex. configuration IAM, pare-feu, logs).
+3. **Valider localement** avec `terraform validate` et `checkov`.
+4. **Committer et re-pousser** pour relancer la pipeline.
+5. **Documenter la correction** pour assurer la traçabilité et l’amélioration continue.
+
+> ⚠️ Le processus doit être suivi avant tout nouveau déploiement afin de garantir la conformité continue de l’infrastructure.
+
 ## Structure du dépôt
 
 ```bash
