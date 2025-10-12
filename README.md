@@ -54,7 +54,7 @@ L’authentification au projet GCP est réalisée via un **Service Account (`ci-
 
 ---
 
-## 🚨 Gestion des alertes de sécurité
+## Gestion des alertes de sécurité
 
 Lorsqu’une non-conformité est détectée par Checkov ou Prowler dans la pipeline :
 
@@ -64,7 +64,7 @@ Lorsqu’une non-conformité est détectée par Checkov ou Prowler dans la pipel
 4. **Committer et re-pousser** pour relancer la pipeline.
 5. **Documenter la correction** pour assurer la traçabilité et l’amélioration continue.
 
-> ⚠️ Le processus doit être suivi avant tout nouveau déploiement afin de garantir la conformité continue de l’infrastructure.
+> Le processus doit être suivi avant tout nouveau déploiement afin de garantir la conformité continue de l’infrastructure.
 
 ## Structure du dépôt
 
